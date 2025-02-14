@@ -21,9 +21,6 @@ url_old <- "https://www.cs.ubc.ca/~davet/music/list/Best9.html"
 rs_old <- url_old %>% read_html() %>% html_nodes(xpath='/html/body/table[2]') %>% html_table() %>% pluck(1) %>% 
   select(1, 4, 3, 7) %>% rename(Rank = X1, Artist = X3, Song = X4, Year = X7) %>% filter(Year != "YEAR") 
 
-# If there's a security error, add:
-#url %>% httr::GET(config = httr::config(ssl_verifypeer = FALSE)) %>% read_html()
-
 #OR
 load("rs_data.RData")
 
@@ -37,8 +34,20 @@ load("rs_data.RData")
 # In the viewer, take a look at the merge...what kinds of problems are there?
 # Why did some of the artist-song fail to match up?
 
-#ANSWER
 
+#ANSWER
+rs_joined_orig <- full_join(rs_old, rs_new, by = c("Artist", "Song"))
+nrow(rs_joined_orig)
+
+Some artist–song pairs fail to match because of inconsistencies in naming conventions—such 
+as extra words ("The"), punctuation, case differences, or the use of "&" instead of "and." 
+These differences create duplicates and mismatches in the join.
+
+When merging the 2004 and 2021 lists by song title and artist name, the raw merge yielded more 
+rows than expected. This occurred because many song–artist pairs did not match perfectly due to differences 
+in naming conventions. For example, one list might record “The Beatles” while the other uses “Beatles.” Other 
+discrepancies include differences in punctuation, capitalization, or the use of symbols (such as “&” versus “and”). 
+These inconsistencies lead to duplicate entries or mismatches in join.
 
 
 ### Question 2 ---------- 
@@ -50,6 +59,21 @@ load("rs_data.RData")
 # Make Rank and Year into integer variables for rs_old before binding them into rs_all
 
 #ANSWER
+rs_old <- rs_old %>% mutate(Rank = as.integer(Rank), Year = as.integer(Year), Source = "Old")
+rs_new <- rs_new %>% mutate(Source = "New")
+rs_all <- bind_rows(rs_new, rs_old)
+
+
+To better manage and later clean the data, a new variable called 
+Source is added to each dataset—assigning “New” to the 2021 data and “Old” to the 2004 data. 
+Before combining, the old dataset’s Rank and Year values (originally character strings) are 
+converted to integers. Then, the two datasets are bound together (using bind_rows) into a single 
+dataset (rs_all). This unified dataset allows you to see all entries along with their origin, which is 
+crucial for later comparisons and cleaning.
+
+
+
+
 
 
 ### Question 3 ----------
@@ -62,6 +86,20 @@ load("rs_data.RData")
 # Use both functions to make all artists/song lowercase and remove any extra spaces
 
 #ANSWER
+rs_all <- rs_all %>% mutate(Artist = str_remove_all(Artist, "The"),
+                            Artist = str_replace_all(Artist, "&", "and"),
+                            Artist = str_remove_all(Artist, "[:punct:]"),
+                            Artist = str_to_lower(str_trim(Artist)))
+rs_all <- rs_all %>% mutate(Song = str_remove_all(Song, "The"),
+                            Song = str_replace_all(Song, "&", "and"),
+                            Song = str_remove_all(Song, "[:punct:]"),
+                            Song = str_to_lower(str_trim(Song)))
+
+The code cleans the artist and song names as required. (I think For more robust cleaning,
+it would be better to consider using a regex like "(?i)\\bthe\\b" to remove “The” case‑insensitively and only when it’s a whole
+word, and ensure that punctuation is removed using a POSIX class like "[[:punct:]]".)
+
+
 
 
 ### Question 4 ----------
@@ -75,6 +113,16 @@ load("rs_data.RData")
 # in the new rs_joined compared to the original. Use nrow to check (there should be 799 rows)
 
 #ANSWER
+temp_new <- rs_all %>% filter(Source == "New")
+temp_old <- rs_all %>% filter(Source == "Old")
+rs_joined <- full_join(temp_old, temp_new, by = c("Artist", "Song"), suffix = c("_Old","_New"))
+nrow(rs_joined)
+
+After cleaning, the code successfully splits and rejoins the data. 
+The resulting rs_joined should have 799 rows, indicating that cleaning helped reduce duplicates and
+improved matching between the two lists.
+
+
 
 
 ### Question 5 ----------
@@ -88,6 +136,17 @@ load("rs_data.RData")
 # You should now be able to see how each song moved up/down in rankings between the two lists
 
 #ANSWER
+rs_joined <- rs_joined %>% 
+  select(-starts_with("Source")) %>% 
+  filter(!is.na(Rank_New), !is.na(Rank_Old)) %>% 
+  mutate(Rank_Change = Rank_Old - Rank_New) %>% 
+  arrange(Rank_Change)
+
+The code correctly removes the source variables, filters to retain only songs 
+present in both lists, computes the rank change, and sorts the dataset. 
+A positive Rank_Change indicates that a song’s ranking improved in the new list.
+
+
 
 
 ### Question 6 ----------
@@ -99,7 +158,20 @@ load("rs_data.RData")
 # Which decade improved the most?
 
 #ANSWER
+rs_joined <- rs_joined %>% 
+  mutate(Decade = floor(Year_New/10)*10,
+         Decade = factor(paste0(Decade, "s")))
 
+rs_joined %>% group_by(Decade) %>% 
+  summarize(M_Change = mean(Rank_Change))
+
+
+A new variable is created by converting the release year (taken from the 2021 data) 
+into a decade label (for example, converting 1971 to “1970s”). This decade variable is treated as a 
+factor. The songs are then grouped by decade, and the mean Rank_Change is computed for each group. 
+This analysis helps reveal which decade’s songs, on average, experienced the most improvement (or decline) 
+in rankings between 2004 and 2021. The text notes that while individual songs shifted dramatically, 
+there was no clear systematic bias by decade—the changes were mixed.
 
 
 ### Question 7 ----------
@@ -110,6 +182,14 @@ load("rs_data.RData")
 # proportion of songs in each of the top three decades (vs. all the rest)
 
 #ANSWER
+fct_count(rs_joined$Decade)
+fct_count(fct_lump(rs_joined$Decade, 3), prop = T)
+
+This step reveals the relative proportion of overlapping songs: 
+      according to the text, the 1960s and 1970s dominate the overlap, with the 1980s being the 
+      next most significant contributor. Other decades (such as the 1950s, 1990s, and 2000s) have fewer songs in 
+      common between the lists.
+
 
 
 
@@ -120,6 +200,15 @@ load("rs_data.RData")
 # Use parse_date_time to fix it
 
 #ANSWER
+top20 <- read_csv("top_20.csv")
+top20 <- top20 %>% mutate(Release_Date = parse_date_time(Release, "%d-%b-%Y"))
+
+
+This code correctly reads in the CSV and converts the date column. 
+(we must make sure that the column name "Release" is correct in your CSV file and that the 
+ date format "%d-%b-%Y" matches our data.)
+
+
 
 
 ### Question 9 --------
@@ -129,6 +218,14 @@ load("rs_data.RData")
 # overwrite top20 with the pivoted data (there should now be 20 rows!)
 
 #ANSWER
+
+top20 <- top20 %>% pivot_wider(names_from = "Style", values_from = "Value")
+
+
+The code pivots the data correctly so that each unique value in the Style 
+column (e.g., “bpm”, “Key”) becomes a separate column with the corresponding value from Value. 
+After this operation, top20 should have 20 rows with expanded columns.
+
 
 
 
@@ -144,6 +241,21 @@ load("rs_data.RData")
 
 #ANSWER
 
+top20 <- left_join(top20, rs_joined, by = c("Artist","Song"))
+top20 <- top20 %>% mutate(Release_Month = month(Release_Date, label = T),
+                          Season = fct_collapse(Release_Month,
+                                                Winter = c("Dec", "Jan","Feb"),
+                                                Spring = c("Mar","Apr","May"),
+                                                Summer = c("Jun", "Jul","Aug"),
+                                                Fall = c("Sep", "Oct", "Nov")))
+fct_count(top20$Season)
+
+The code correctly merges the ranking data into top20, extracts the month 
+from Release_Date as a factor, and collapses the months into seasons using fct_collapse. Finally, 
+it counts the number of songs in each season.
+
+
+
 
 
 ### Question 11 ---------
@@ -155,5 +267,16 @@ load("rs_data.RData")
 
 #ANSWER
 
+top20 <- top20 %>% mutate(Quality = factor(ifelse(str_detect(Key, "m"), "Minor", "Major")))
+top20 %>% filter(Quality == "Minor") %>% slice_min(Rank_New)
 
+
+A new factor variable called Quality is created to classify each song’s musical key as either “Major” or 
+ “Minor.” The rule used is that if the key string contains a lowercase “m,” the song is 
+ considered to be in a minor key; otherwise, it is classified as major. After classifying the
+  songs, the code filters to determine how many songs fall into each category. Then, among the 
+  minor-key songs, the one with the lowest Rank_New (i.e., the highest ranking on the new list) 
+  is identified. According to the text, about 30% of the top 20 songs are in minor keys, and 
+  notably, “Fight the Power” (a minor-key song) is ranked at #2, making it the top-ranked minor-key 
+\ song.
 
